@@ -1,0 +1,1 @@
+# FlowDesk Shared Schemas

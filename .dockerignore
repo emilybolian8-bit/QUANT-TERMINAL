@@ -1,0 +1,62 @@
+# Build context exclusions.
+# Anything here is NOT sent to the daemon, which keeps builds fast and stops
+# local build output or secrets from leaking into an image layer.
+
+# Dependencies are reinstalled inside the image (npm ci), never copied from host.
+node_modules
+dist
+dist-ssr
+*.local
+
+# Secrets. GEMINI_API_KEY must be supplied at runtime via Cloud Run env vars /
+# Secret Manager - baking it into an image would publish it to the registry.
+.env
+.env.*
+!.env.example
+
+# Local deploy credentials. git.txt holds the fine-grained GitHub PAT used to
+# push - COPY . . would otherwise land it in a build layer and every image it
+# produces. Excluded here as well as in .gcloudignore.
+git.txt
+*.key
+*token*.txt
+
+# Local run output.
+dev.err
+*.err
+ERROR.txt
+
+# Reference design doc kept locally; not app code, so it is not copied in.
+liquidation_heatmap.html
+
+# Runtime data written at boot: the liquidation tape (hourly JSONL), the
+# CoinGecko id-map (coingecko.json), and the automated scanner's config
+# (auto-scanner/config.json). Shipping them would bloat the image and silently
+# seed it with one machine's data.
+data
+
+# VCS and editor noise
+.git
+.gitignore
+.github
+.vscode
+.idea
+*.swp
+
+# Logs and OS cruft
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Cloud Build / deploy descriptors are not needed inside the image
+Dockerfile
+.dockerignore
+cloudbuild.yaml
+.gcloudignore
+
+# AI Studio scaffolding
+assets/.aistudio
+
+# Docs
+README.md

@@ -1,0 +1,206 @@
+# Cloud Build pipeline: build -> push -> deploy to Cloud Run.
+#
+#   gcloud builds submit --config cloudbuild.yaml
+#
+# Requires: an Artifact Registry repo plus a Cloud Build service account with
+# roles/artifactregistry.writer and roles/run.admin.
+#
+# GEMINI_API_KEY is deliberately NOT baked into the image. Attach it to the
+# service with Secret Manager instead:
+#
+#   gcloud secrets create GEMINI_API_KEY --data-file=-
+#   gcloud run services update ${_SERVICE} --region ${_REGION} \
+#     --set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest
+#
+# The app degrades gracefully without the key: /api/report returns a local
+# heuristic memo instead of a generated one.
+#
+# The CoinGecko id-map (the market-cap fallback added in
+# coingecko_id_helper_spec.md) calls api.coingecko.com from the instance at
+# boot. Cloud Run permits outbound HTTPS by default, so no egress rule or
+# allowlist change is required. The public tier is rate limited (~10 requests
+# per minute); the build throttles to COINGECKO_RPM and retries with backoff,
+# runs in the background, and never delays the HTTP listener.
+
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: crypto-quant
+  _SERVICE: crypto-quant-terminal
+  # Leave empty to use the project that submitted the build.
+  _PROJECT: ""
+  # The liquidation collectors (Binance/Bybit/OKX force-order websockets) and
+  # the automated scanner (candle-close sweeps of the saved universe, see
+  # /api/auto-scanner) both run 24/7 inside this service whether or not anyone
+  # is looking, so at least one instance must stay warm: scale-to-zero would
+  # pause collection and skip sweeps exactly the way a user would notice it.
+  # min-instances=1 is the cost of a feed that is always current.
+  _MIN_INSTANCES: "1"
+  # Kept at 1 while persistent data is mounted: the hourly JSONL log is a shared
+  # file that two instances appending through GCS FUSE can clobber, the
+  # CoinGecko id-map is a single JSON file rewritten at boot, and the automated
+  # scanner writes one data/auto-scanner/config.json while its candle-close
+  # sweeps must never run twice against the same universe. Raise only if you
+  # disable _LIQ_BUCKET.
+  _MAX_INSTANCES: "1"
+  _CPU: "1"
+  _MEMORY: 1Gi
+  # Generous ceiling: /api/terminal pages klines from Binance for both assets
+  # and can take a while on a 45-day range. /api/code-series fans out over the
+  # same klines but ships raw candles, so it is the lighter of the two.
+  _TIMEOUT: "300"
+  # Persistent liquidation tape. Leaving this empty (the default) auto-creates
+  # and mounts a GCS bucket named "<project>-crypto-quant-liq" so the hourly
+  # JSONL survives every deploy and instance replacement, and boot replays the
+  # retention window back into the store (see src/utils/liquidation_persistence.ts).
+  # Set an explicit bucket (name or gs://name) to use your own; set it to the
+  # literal string "none" to force the old ephemeral in-instance behaviour.
+  # Create once manually with: gcloud storage buckets create gs://BUCKET
+  # Note: GCS FUSE stages open write files in container memory (~64 MiB per
+  # currently-open hourly file, max 3 venues) - budget it against _MEMORY.
+  #
+  # The same /data mount also holds the CoinGecko id-map (data/coingecko.json,
+  # see below), so the map survives redeploys and is not rebuilt from scratch
+  # on every cold start.
+  _LIQ_BUCKET: ""
+  # CoinGecko id-map (coingecko_id_helper_spec.md). Built once at boot when the
+  # persisted map is missing or older than 7 days, and written under /data.
+  # The public endpoint needs no key. If you have a demo/pro key, attach it as a
+  # secret instead of an env var:
+  #   gcloud run services update ${_SERVICE} --region ${_REGION} \
+  #     --set-secrets=COINGECKO_API_KEY=COINGECKO_API_KEY:latest
+  # _COINGECKO_RPM must stay within the key tier's allowance (10 suits the
+  # public tier); _COINGECKO_TOP_N bounds the build by market-cap rank.
+  _COINGECKO_TOP_N: "1100"
+  _COINGECKO_RPM: "10"
+
+# Runtime notes for the Code Lab tab:
+#
+#   The Python interpreter is Pyodide (CPython 3.14 compiled to WebAssembly) and
+#   runs in the BROWSER, fetched from cdn.jsdelivr.net on first use. Nothing in
+#   this image carries Python, so the Code Lab adds no CPU, memory, image size
+#   or cold-start cost here - only /api/code-series, which serves the same
+#   public Binance klines as /api/terminal.
+#
+#   The one operational consequence is outbound browser access to jsDelivr. No
+#   allowlist or egress change is needed for Cloud Run itself, but end users on
+#   a locked-down corporate proxy will fail to load the interpreter. To
+#   self-host instead, mirror the pyodide distribution into a public bucket and
+#   point PYODIDE_VERSION / CDN_BASE in src/utils/pyodide.ts at it; do not
+#   bake it into this image.
+
+# Runtime notes for the automated scanner (/api/auto-scanner):
+#
+#   The scanner is server-side and always on: it seeds each saved symbol's
+#   klines once (or resumes them from the on-disk cache), then sweeps only on
+#   candle boundaries (15m/1h) and exposes the latest snapshot to the UI. It persists both its config and its per-symbol
+#   kline cache (config.json + klines.json) to AUTO_SCAN_DIR (wired to
+#   /data/auto-scanner above), so a redeploy resumes the saved universe and
+#   appends only the new candles instead of re-paginating the whole window. If a
+#   subject ever comes back with no new bars for a closed candle (a silent stall
+#   from a dropped page or a throttled fetch) the engine discards that series and
+#   rebuilds it rather than serving a frozen snapshot. It needs no new build step
+#   or dependency, and reuses the same public Binance klines as /api/terminal.
+#
+#   Because the sweep loop and the config are single-writer, keep
+#   _MAX_INSTANCES=1. The sweep fires from a timer, so the deploy also passes
+#   --no-cpu-throttling: with the default request-only CPU allocation the timer
+#   would be throttled the moment the instance goes idle. Set AUTO_SCAN=0 in the
+#   service env to boot the HTTP listener without the scanner (mirrors
+#   LIQ_COLLECT=0).
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  # Vite + esbuild plus a cold `npm ci` exceeds the default build timeout.
+  machineType: E2_HIGHCPU_8
+
+steps:
+  # 1. Build from the Dockerfile (multi-stage: toolchain discarded).
+  - id: Build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${_PROJECT}/$_REGION-$_REPOSITORY/${_SERVICE}:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/${_PROJECT}/$_REGION-$_REPOSITORY/${_SERVICE}:latest
+      - .
+
+  # 2. Push both tags in one push so the upload is shared.
+  - id: Push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${_PROJECT}/$_REGION-$_REPOSITORY/${_SERVICE}
+
+  # 3. Deploy the image just pushed. A persistent GCS bucket is mounted at
+  #    /data (read-write, gen2 execution env required for volume mounts) and
+  #    LIQ_DATA_DIR points into it, so the liquidation tape and its 24h+
+  #    gainers/losers baseline survive deploys instead of resetting to zero.
+#    COINGECKO_DATA_FILE and AUTO_SCAN_DIR point at the same mount, so the
+#    id-map and the automated scanner's saved universe and kline cache persist
+#    too.
+  #    The bucket is auto-created on first deploy and the runtime service
+  #    account granted objectAdmin. Set _LIQ_BUCKET=none to opt out.
+  - id: Deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        PROJECT="${_PROJECT}"
+        if [ -z "$PROJECT" ]; then PROJECT="$PROJECT_ID"; fi
+
+        # --no-cpu-throttling keeps CPU allocated between requests so the
+        # scanner's candle-close timer (and the liquidation tape flushers) are
+        # not dormant while the instance sits idle. Safe because min-instances=1
+        # keeps the instance up and max-instances=1 keeps it single-writer; the
+        # tradeoff is being billed for the vCPU while the last instance is warm.
+        ARGS=(run deploy "$_SERVICE"
+          "--image=$_REGION-docker.pkg.dev/$PROJECT/$_REGION-$_REPOSITORY/$_SERVICE:$SHORT_SHA"
+          "--region=$_REGION"
+          "--platform=managed"
+          "--port=8080"
+          "--cpu=$_CPU"
+          "--memory=$_MEMORY"
+          "--min-instances=$_MIN_INSTANCES"
+          "--max-instances=$_MAX_INSTANCES"
+          "--no-cpu-throttling"
+          "--timeout=$_TIMEOUT""s"
+          "--allow-unauthenticated"
+          "--quiet")
+
+        # The CoinGecko id-map and the automated scanner config are always
+        # pointed at /data. That path is the mounted bucket when one is
+        # configured (persistent) and the image's own /data otherwise
+        # (ephemeral, but still writable).
+        ENV_VARS="COINGECKO_DATA_FILE=/data/coingecko.json,AUTO_SCAN_DIR=/data/auto-scanner,COINGECKO_TOP_N=${_COINGECKO_TOP_N},COINGECKO_RPM=${_COINGECKO_RPM}"
+
+        if [ "$_LIQ_BUCKET" != "none" ]; then
+          BUCKET="${_LIQ_BUCKET}"
+          if [ -z "$BUCKET" ]; then BUCKET="$PROJECT-crypto-quant-liq"; fi
+          BUCKET="${BUCKET#gs://}"
+          if ! gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then
+            echo "Creating persistent liquidation bucket gs://$BUCKET"
+            gcloud storage buckets create "gs://$BUCKET" \
+              --location="$_REGION" --uniform-bucket-level-access
+          fi
+          PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)' 2>/dev/null || true)
+          if [ -n "$PROJECT_NUMBER" ]; then
+            RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+            gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+              --member="serviceAccount:${RUNTIME_SA}" \
+              --role="roles/storage.objectAdmin" --quiet >/dev/null 2>&1 || true
+          else
+            echo "WARNING: could not resolve project number; grant the Cloud Run service account objectAdmin on gs://$BUCKET manually."
+          fi
+          ARGS+=("--add-volume=mount-path=/data,type=cloud-storage,bucket=$BUCKET,readonly=false")
+          ENV_VARS="$ENV_VARS,LIQ_DATA_DIR=/data/liq"
+          ARGS+=("--execution-environment=gen2")
+        fi
+
+        ARGS+=("--update-env-vars=$ENV_VARS")
+
+        gcloud "${ARGS[@]}"
+
+timeout: 1800s
