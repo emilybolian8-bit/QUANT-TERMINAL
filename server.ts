@@ -3157,13 +3157,16 @@ async function runAutoSweep(reason: string): Promise<void> {
     autoWarnings = warnings;
     autoMeta.consecutiveFailures = 0;
     autoMeta.lastSweepError = null;
-    autoRevision += 1;
   } catch (error: any) {
     autoMeta.consecutiveFailures += 1;
     autoMeta.lastSweepError = error.message || "Automated sweep failed.";
     autoWarnings = [...warnings, autoMeta.lastSweepError];
     console.error("Automated scanner sweep failed:", error);
   } finally {
+    // Always publish a new snapshot so the UI reflects the latest attempt/errors.
+    autoSnapshotRows = null;
+    autoRevision += 1;
+
     autoRunning = false;
     autoMeta.running = false;
     autoMeta.lastSweepFinishedAt = Date.now();
@@ -3237,10 +3240,22 @@ app.get("/api/auto-scanner", (_req, res) => {
 
 app.post("/api/auto-scanner/run", async (_req, res) => {
   try {
+    if (autoRunning) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(202).json(buildAutoSnapshot());
+    }
     await runAutoSweep("manual");
+    res.setHeader("Cache-Control", "no-store");
     res.json(buildAutoSnapshot());
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Automated sweep failed." });
+    autoSnapshotRows = null;
+    autoRevision += 1;
+    res.setHeader("Cache-Control", "no-store");
+    try {
+      return res.status(500).json(buildAutoSnapshot());
+    } catch {
+      return res.status(500).json({ error: error.message || "Automated sweep failed." });
+    }
   }
 });
 
@@ -4444,10 +4459,12 @@ app.get("/api/liq/coin", (req, res) => {
  * retention cannot appear in the map anyway.
  */
 const LIQ_HEATMAP_TIMEFRAMES: Record<string, { interval: string; barMs: number; spanMs: number }> = {
-  "1m": { interval: "1m", barMs: 60_000, spanMs: 4 * 60 * 60 * 1000 },
-  "5m": { interval: "5m", barMs: 5 * 60_000, spanMs: 12 * 60 * 60 * 1000 },
-  "15m": { interval: "15m", barMs: 15 * 60_000, spanMs: 24 * 60 * 60 * 1000 },
-  "1h": { interval: "1h", barMs: 60 * 60_000, spanMs: 48 * 60 * 60 * 1000 },
+  "1m": { interval: "1m", barMs: 60_000, spanMs: 24 * 60 * 60 * 1000 },
+  "5m": { interval: "5m", barMs: 5 * 60_000, spanMs: 48 * 60 * 60 * 1000 },
+  "15m": { interval: "15m", barMs: 15 * 60_000, spanMs: 3 * 24 * 60 * 60 * 1000 },
+  "1h": { interval: "1h", barMs: 60 * 60_000, spanMs: 7 * 24 * 60 * 60 * 1000 },
+  "4h": { interval: "4h", barMs: 4 * 60 * 60_000, spanMs: 14 * 24 * 60 * 60 * 1000 },
+  "1d": { interval: "1d", barMs: 24 * 60 * 60_000, spanMs: 30 * 24 * 60 * 60 * 1000 },
 };
 
 /** Interval each page window defaults to, preserving the pre-timeframe look. */

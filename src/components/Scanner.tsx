@@ -1521,7 +1521,15 @@ function AutoScanner({
     try {
       const response = await fetch("/api/auto-scanner/run", { method: "POST" });
       const payload = (await response.json()) as AutoScanSnapshot;
-      if (response.ok) setSnapshot(payload);
+      if (response.ok || response.status === 202) {
+        setSnapshot(payload);
+        setLoadError(null);
+      } else {
+        setSnapshot(payload);
+        if ((payload as any)?.meta?.lastSweepError) {
+          setLoadError((payload as any).meta.lastSweepError);
+        }
+      }
     } catch {
       // The 20s poll will catch up; a failed forced run is not fatal.
     } finally {

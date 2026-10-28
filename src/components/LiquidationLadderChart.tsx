@@ -22,7 +22,7 @@ const DEFAULT_BARS = 100;
  * Chart-local candle intervals. Each maps to a server-side lookback span, so
  * the timeframe can be coarsened or refined without touching the page window.
  */
-const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h"] as const;
+const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 const DEFAULT_INTERVAL_BY_WINDOW: Record<LiqWindow, string> = {
   "1h": "1m",
   "4h": "5m",
@@ -32,6 +32,11 @@ const DEFAULT_INTERVAL_BY_WINDOW: Record<LiqWindow, string> = {
 const DEFAULT_GAIN = 1.4;
 const DEFAULT_HIDE_BELOW = 8;
 const DEFAULT_PAD = 45;
+
+/** Volume panel defaults. */
+const DEFAULT_SHOW_VOLUME = true;
+const DEFAULT_VOLUME_HEIGHT = 18; // percent of chart height
+const DEFAULT_VOLUME_SCALE = 1.0;
 
 /** Gutter geometry, mirrored from the reference build. */
 const L = 8;
@@ -421,6 +426,9 @@ function HeatmapFrame({
   const [yPan, setYPan] = useState(0);
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [showVolume, setShowVolume] = useState<boolean>(DEFAULT_SHOW_VOLUME);
+  const [volumeHeightPct, setVolumeHeightPct] = useState<number>(DEFAULT_VOLUME_HEIGHT);
+  const [volumeScale, setVolumeScale] = useState<number>(DEFAULT_VOLUME_SCALE);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const layoutRef = useRef<Layout | null>(null);
@@ -530,7 +538,8 @@ function HeatmapFrame({
     const i0 = Math.max(0, i1 - N + 1);
     const px0 = L;
     const px1 = W - RA - PW - 8;
-    const ph = H - B - TOP;
+    const volH = showVolume ? Math.max(16, (H * volumeHeightPct) / 100) : 0;
+    const ph = H - B - TOP - volH - (showVolume ? 6 : 0);
     const bw = (px1 - px0) / (N + 3);
 
     let lo = Infinity;
@@ -658,6 +667,34 @@ function HeatmapFrame({
       );
     }
 
+    // Volume panel (secondary customizable chart)
+    if (showVolume && volH > 0) {
+      const volTop = H - B - volH;
+      const volBot = H - B;
+      cx.strokeStyle = "rgba(128,137,160,0.35)";
+      cx.beginPath();
+      cx.moveTo(px0, volTop);
+      cx.lineTo(px1, volTop);
+      cx.stroke();
+      let vmaxVol = 0;
+      for (let i = i0; i <= i1; i += 1) {
+        const v = Number(candles[i].volume) || 0;
+        if (v > vmaxVol) vmaxVol = v;
+      }
+      if (vmaxVol <= 0) vmaxVol = 1;
+      for (let i = i0; i <= i1; i += 1) {
+        const bar = candles[i];
+        const v = (Number(bar.volume) || 0) * volumeScale;
+        const hVol = Math.max(1, (v / vmaxVol) * (volH - 4));
+        const x = X(i) + bw / 2;
+        const up = bar.close >= bar.open;
+        cx.fillStyle = up ? "rgba(43,181,164,0.65)" : "rgba(240,82,79,0.65)";
+        cx.fillRect(x - bw * 0.3, volBot - hVol, bw * 0.6, hVol);
+      }
+      cx.fillStyle = COL.axis;
+      cx.fillText("VOL", px0, volTop - 3);
+    }
+
     // Last price line.
     cx.strokeStyle = COL.price;
     cx.setLineDash([4, 3]);
@@ -775,7 +812,7 @@ function HeatmapFrame({
       return;
     }
 
-    // Pan: horizontal moves time, vertical moves price.
+    // Pan: horizontal moves time for panning/compression context (no rewind slider). Vertical moves price.
     const dT = Math.round(-dx / ly.bw);
     setT(clamp(drag.T + dT, 0, n - 1));
     const base = (ly.aLo + ly.aHi) / 2;
@@ -871,8 +908,44 @@ function HeatmapFrame({
             ))}
           </select>
         </label>
+        <label className="flex items-center gap-2 text-[12px] text-[#8089a0]">
+          <input
+            type="checkbox"
+            checked={showVolume}
+            onChange={(e) => setShowVolume(e.target.checked)}
+            className="accent-[#ffd24a]"
+          />
+          Volume
+        </label>
+        {showVolume && (
+          <>
+            <label className="flex items-center gap-2 text-[12px] text-[#8089a0]">
+              Vol height
+              <input
+                type="range"
+                min={8}
+                max={40}
+                value={volumeHeightPct}
+                onChange={(e) => setVolumeHeightPct(Number(e.target.value))}
+                className={`${sliderCls} w-[90px]`}
+              />
+            </label>
+            <label className="flex items-center gap-2 text-[12px] text-[#8089a0]">
+              Vol scale
+              <input
+                type="range"
+                min={0.5}
+                max={3}
+                step={0.1}
+                value={volumeScale}
+                onChange={(e) => setVolumeScale(Number(e.target.value))}
+                className={`${sliderCls} w-[90px]`}
+              />
+            </label>
+          </>
+        )}
         <span className="ml-auto text-[12px] font-mono text-[#8089a0]">
-          {symbol} · {liqWindow.toUpperCase()} · {data.interval} BARS
+          {symbol} · {liqWindow.toUpperCase()} · {data.interval} BARS · {n} CANDLES
         </span>
       </div>
 
@@ -885,17 +958,6 @@ function HeatmapFrame({
         >
           {playing ? "Pause" : "Play replay"}
         </button>
-        <label className="flex items-center gap-2 text-[12px] text-[#8089a0]">
-          Time
-          <input
-            type="range"
-            min={0}
-            max={Math.max(1, n - 1)}
-            value={t}
-            onChange={(e) => setT(Number(e.target.value))}
-            className={`${sliderCls} w-[260px] max-w-[46vw]`}
-          />
-        </label>
         <label className="flex items-center gap-2 text-[12px] text-[#8089a0]">
           Gain
           <input
@@ -1044,10 +1106,10 @@ function HeatmapFrame({
       <div className="text-[12px] text-[#6b7489] leading-relaxed mt-2.5 px-1 border-t border-[#1f1f25] pt-2.5 max-w-[110ch]">
         Levels are built from live liquidation prints (Binance, Bybit, OKX) snapped to{" "}
         {binBps.toFixed(2)}% price bins. Each print seeds its bin with its full notional; once price trades
-        through the bin, the covered share is cleared and never returns — a wick through the whole bin removes
-        it, a wick into half of it removes half. Drag the time slider or press Play to watch levels build and
-        get consumed. Scroll to zoom time, shift+scroll to zoom price, drag to pan, drag the price scale to
-        stretch it, double-click to reset.
+        through the bin, the covered share is cleared and never returns. Time is navigated by panning/zooming
+        (wheel to compress/expand, drag to pan, drag the price scale to stretch). No timeline scrubber/rewind
+        control is used; only the rewind bar logic has been removed. Volume is shown as a customizable secondary
+        panel. Timeframes expanded to include longer history.
       </div>
     </div>
   );
