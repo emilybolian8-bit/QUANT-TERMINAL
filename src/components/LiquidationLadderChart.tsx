@@ -667,34 +667,6 @@ function HeatmapFrame({
       );
     }
 
-    // Volume panel (secondary customizable chart)
-    if (showVolume && volH > 0) {
-      const volTop = H - B - volH;
-      const volBot = H - B;
-      cx.strokeStyle = "rgba(128,137,160,0.35)";
-      cx.beginPath();
-      cx.moveTo(px0, volTop);
-      cx.lineTo(px1, volTop);
-      cx.stroke();
-      let vmaxVol = 0;
-      for (let i = i0; i <= i1; i += 1) {
-        const v = Number(candles[i].volume) || 0;
-        if (v > vmaxVol) vmaxVol = v;
-      }
-      if (vmaxVol <= 0) vmaxVol = 1;
-      for (let i = i0; i <= i1; i += 1) {
-        const bar = candles[i];
-        const v = (Number(bar.volume) || 0) * volumeScale;
-        const hVol = Math.max(1, (v / vmaxVol) * (volH - 4));
-        const x = X(i) + bw / 2;
-        const up = bar.close >= bar.open;
-        cx.fillStyle = up ? "rgba(43,181,164,0.65)" : "rgba(240,82,79,0.65)";
-        cx.fillRect(x - bw * 0.3, volBot - hVol, bw * 0.6, hVol);
-      }
-      cx.fillStyle = COL.axis;
-      cx.fillText("VOL", px0, volTop - 3);
-    }
-
     // Last price line.
     cx.strokeStyle = COL.price;
     cx.setLineDash([4, 3]);
@@ -717,6 +689,40 @@ function HeatmapFrame({
       cx.setLineDash([]);
     }
     cx.restore();
+
+    // Volume panel (secondary customizable chart). Drawn after restoring the
+    // price clip, otherwise the price panel's clip rectangle swallows it.
+    if (showVolume && volH > 0) {
+      const volTop = H - B - volH;
+      const volBot = H - B;
+      cx.save();
+      cx.beginPath();
+      cx.rect(px0, volTop, px1 - px0, volH);
+      cx.clip();
+      cx.strokeStyle = "rgba(128,137,160,0.35)";
+      cx.beginPath();
+      cx.moveTo(px0, volTop);
+      cx.lineTo(px1, volTop);
+      cx.stroke();
+      let vmaxVol = 0;
+      for (let i = i0; i <= i1; i += 1) {
+        const v = Number(candles[i].volume) || 0;
+        if (v > vmaxVol) vmaxVol = v;
+      }
+      if (vmaxVol <= 0) vmaxVol = 1;
+      for (let i = i0; i <= i1; i += 1) {
+        const bar = candles[i];
+        const v = (Number(bar.volume) || 0) * volumeScale;
+        const hVol = Math.max(1, (v / vmaxVol) * (volH - 4));
+        const x = X(i) + bw / 2;
+        const up = bar.close >= bar.open;
+        cx.fillStyle = up ? "rgba(43,181,164,0.65)" : "rgba(240,82,79,0.65)";
+        cx.fillRect(x - bw * 0.3, volBot - hVol, bw * 0.6, hVol);
+      }
+      cx.restore();
+      cx.fillStyle = COL.axis;
+      cx.fillText("VOL", px0, volTop - 3);
+    }
 
     // Last price tag, right of the profile.
     cx.fillStyle = COL.price;
