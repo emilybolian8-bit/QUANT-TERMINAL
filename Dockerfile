@@ -69,7 +69,6 @@ COPY --from=build /app/dist ./dist
 # Cloud Run GCS mount both land in the same place. Owned by `node` because the
 # container runs unprivileged.
 RUN mkdir -p /data/liq /data/auto-scanner && chown -R node:node /data
-VOLUME ["/data"]
 
 # Run unprivileged. node:slim already ships a `node` user (uid 1000).
 USER node
