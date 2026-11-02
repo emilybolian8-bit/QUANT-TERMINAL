@@ -1,0 +1,43 @@
+# Generic Docker build script - platform agnostic.
+# Cloud Build (GCP) specific: remove for pure Railway/VPS deployment.
+
+# This file is excluded from builds via .dockerignore / .railwayignore
+# and is only kept for local reference or multi-platform CI.
+
+# To use with Railway: run `railway up` or `docker build` locally.
+# To use with GCP Cloud Run: use the original cloudbuild.yaml content.
+
+# Local Docker build (works on any platform):
+#   docker build -t crypto-quant-terminal .
+#   docker run -p 8080:8080 -p 8000:8000 \\
+#     -e NODE_ENV=production \\
+#     -e PORT=8080 \\
+#     -e GEMINI_API_KEY="$GEMINI_API_KEY" \\
+#     -e DATABASE_URL="postgresql+asyncpg://flowdesk:flowdesk@postgres:5432/flowdesk" \\
+#     -e REDIS_URL="redis://redis:6379/0" \\
+#     -e API_HOST=0.0.0.0 \\
+#     -e API_PORT=8000 \\
+#     -e API_SECRET_KEY=change-me-in-production \\
+#     -e COLLECTOR_ENABLED_VENUES=binance,bybit,okx,hyperliquid \\
+#     -e COLLECTOR_OI_POLL_INTERVAL=15 \\
+#     -e COLLECTOR_KLINE_POLL_INTERVAL=60 \\
+#     -e COLLECTOR_BACKFILL_HOURS=36 \\
+#     -e ENGINE_COMPUTE_INTERVAL=5 \\
+#     -e ENGINE_ALERT_EVAL_INTERVAL=5 \\
+#     -e BINANCE_RATE_LIMIT=1200 \\
+#     -e BYBIT_RATE_LIMIT=120 \\
+#     -e OKX_RATE_LIMIT=120 \\
+#     -e HYPERLIQUID_RATE_LIMIT=120 \\
+#     -e ALERT_DEFAULT_COOLDOWN_S=900 \\
+#     -e ALERT_MIN_PRIOR_VOL_5M=50000 \\
+#     -e ALERT_MIN_24H_VOL=1000000 \\
+#     -e LOG_LEVEL=INFO \\
+#     -v liq_data:/data \\
+#     --restart unless-stopped \\
+#     crypto-quant-terminal
+
+# Railway CLI deploy:
+#   railway up
+
+# Or Docker Compose (matches original flowdesk-compose):
+#   docker compose up -d

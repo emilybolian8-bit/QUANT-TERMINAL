@@ -1,0 +1,84 @@
+# Railway deployment configuration
+# This file replaces cloudbuild.yaml for Railway VPS deployment.
+# Railway builds and deploys from git directly using Dockerfile.
+
+# Service configuration
+service: crypto-quant-terminal
+project: your-railway-project
+
+# Build configuration - Railway auto-detects Docker from Dockerfile
+build:
+  dockerfile: Dockerfile
+  context: .
+
+# Environment variables (set via Railway dashboard or CLI)
+# These match the original GCP Cloud Run env vars
+env:
+  - name: NODE_ENV
+    value: production
+  - name: PORT
+    value: "8080"
+  - name: NPM_CONFIG_UPDATE_NOTIFIER
+    value: "false"
+  - name: LIQ_DATA_DIR
+    value: /data/liq
+  - name: COINGECKO_DATA_FILE
+    value: /data/coingecko.json
+  - name: AUTO_SCAN_DIR
+    value: /data/auto-scanner
+  - name: API_HOST
+    value: "0.0.0.0"
+  - name: API_PORT
+    value: "8000"
+  - name: API_SECRET_KEY
+    value: "change-me-in-production"
+  - name: COLLECTOR_ENABLED_VENUES
+    value: "binance,bybit,okx,hyperliquid"
+  - name: COLLECTOR_OI_POLL_INTERVAL
+    value: "15"
+  - name: COLLECTOR_KLINE_POLL_INTERVAL
+    value: "60"
+  - name: COLLECTOR_BACKFILL_HOURS
+    value: "36"
+  - name: ENGINE_COMPUTE_INTERVAL
+    value: "5"
+  - name: ENGINE_ALERT_EVAL_INTERVAL
+    value: "5"
+  - name: BINANCE_RATE_LIMIT
+    value: "1200"
+  - name: BYBIT_RATE_LIMIT
+    value: "120"
+  - name: OKX_RATE_LIMIT
+    value: "120"
+  - name: HYPERLIQUID_RATE_LIMIT
+    value: "120"
+  - name: ALERT_DEFAULT_COOLDOWN_S
+    value: "900"
+  - name: ALERT_MIN_PRIOR_VOL_5M
+    value: "50000"
+  - name: ALERT_MIN_24H_VOL
+    value: "1000000"
+  - name: LOG_LEVEL
+    value: "INFO"
+
+# Persistent volume configuration for /data
+# Railway provides managed persistent disks
+volumes:
+  - /data
+
+# Port configuration
+port: 8080
+
+# Health check
+healthcheck:
+  path: /healthz
+  interval: 30s
+  timeout: 5s
+  retries: 3
+
+# Auto deploy on git push
+autoDeploy: true
+
+# Set min instances to 1 to keep the liquidation feed warm
+minInstances: 1
+maxInstances: 1

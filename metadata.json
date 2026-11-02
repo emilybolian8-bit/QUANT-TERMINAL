@@ -1,0 +1,6 @@
+{
+  "name": "Crypto Quant Correlation Terminal",
+  "description": "An advanced, institutional-grade quant terminal analyzing cross-asset correlations, market beta sensitivities, lead-lag effects, and pairs-trading spreads against Bitcoin across multiple timeframes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

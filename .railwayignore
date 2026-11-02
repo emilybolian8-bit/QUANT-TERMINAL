@@ -1,0 +1,50 @@
+# Files excluded from railway build/deploy.
+# Mirrors .dockerignore so local and railway uploads behave the same way.
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Secrets: never uploaded or baked in.
+.env
+.env.*
+!.env.example
+
+# Local deploy credentials. git.txt holds the fine-grained GitHub PAT used to
+# push; it must never reach Railway, the image, or the repository.
+git.txt
+*.key
+*token*.txt
+
+# Local run output, never part of a build context.
+dev.err
+*.err
+ERROR.txt
+
+# Reference design doc kept locally; not app code, so not uploaded.
+liquidation_heatmap.html
+
+# Runtime data written at boot: the liquidation tape (hourly JSONL), the
+# CoinGecko id-map (data/coingecko.json), and the automated scanner's config and
+# kline cache (auto-scanner/config.json, auto-scanner/klines.json). Never
+# uploaded; each instance rebuilds or loads its own from the /data mount.
+data
+
+.git
+.gitignore
+.github
+.vscode
+.idea
+*.swp
+
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+Dockerfile
+.dockerignore
+.gcloudignore
+
+assets/.aistudio

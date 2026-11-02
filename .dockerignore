@@ -1,0 +1,53 @@
+# Build context exclusions.
+# Anything here is NOT sent to the daemon, which keeps builds fast and stops
+# local build output or secrets from leaking into an image layer.
+
+# Dependencies are reinstalled inside the image (npm ci), never copied from host.
+node_modules
+dist
+dist-ssr
+*.local
+
+# Secrets. Never bake secrets into the image - supply at runtime via environment
+# variables or the platform's secret management (e.g., Railway secrets panel, .env
+# file mounted at runtime, or docker-compose env_file).
+
+# Local run output.
+dev.err
+*.err
+ERROR.txt
+
+# Reference design doc kept locally; not app code, so it is not copied in.
+liquidation_heatmap.html
+
+# Runtime data written at boot: the liquidation tape (hourly JSONL), the
+# CoinGecko id-map (coingecko.json), and the automated scanner's config
+# (auto-scanner/config.json). Shipping them would bloat the image and silently
+# seed it with one machine's data.
+data
+
+# VCS and editor noise
+.git
+.gitignore
+.github
+.vscode
+.idea
+*.swp
+
+# Logs and OS cruft
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Cloud Build / deploy descriptors are not needed inside the image
+Dockerfile
+.dockerignore
+cloudbuild.yaml
+.gcloudignore
+
+# AI Studio scaffolding
+assets/.aistudio
+
+# Docs
+README.md
